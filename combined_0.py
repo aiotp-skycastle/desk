@@ -7,16 +7,7 @@ from RPLCD.i2c import CharLCD
 import sys
 import logging
 from datetime import datetime, timezone, timedelta
-import threading
 
-# 전역 변수로 타이머 객체 선언
-lcd_reset_timer = None
-
-
-def reset_lcd_display():
-    global lcd_reset_timer
-    lcd_reset_timer = None
-    check_study_time()
 
 
 # 로깅 설정 - 콘솔과 파일 모두에 로그 출력
@@ -113,7 +104,7 @@ def make_request():
         logging.info(f"서버 {url}로 POST 요청 전송 중...")
         session = requests.Session()
         session.mount('https://', requests.adapters.HTTPAdapter(
-            max_retries=3,
+            max_retries=5,
             pool_connections=1,
             pool_maxsize=1
         ))
@@ -172,11 +163,11 @@ def check_study_time():
                                 headers={'accept': 'application/json'})
         if response.status_code == 200:
             data = response.json()
-            study_time_seconds = int(data['today_study_time_seconds'])  # float를 int로 변환
+            study_time_seconds = int(data['today_study_time_seconds'])
             hours, remainder = divmod(study_time_seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
             
-            study_time_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+            study_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             logging.info(f"오늘의 공부 시간: {study_time_str}")
             
             if lcd:
@@ -190,8 +181,9 @@ def check_study_time():
     except Exception as e:
         logging.error(f"공부 시간 확인 중 오류 발생: {e}")
         return None
+
+
 def check_warning():
-    global lcd_reset_timer
     try:
         response = requests.get('https://skycastle.cho0h5.org/buzzer/status', 
                               headers={'accept': 'application/json'})
@@ -206,7 +198,7 @@ def check_warning():
             
             time_diff = abs((current_time - warning_datetime).total_seconds())
             
-            if time_diff <= 3:  # 3초 이내면
+            if time_diff <= 7:  # 3초 이내면
                 buzzer = GPIO.PWM(37, 440)
                 buzzer.start(50)
                 time.sleep(1)
@@ -215,16 +207,8 @@ def check_warning():
                 if lcd:
                     lcd.clear()
                     lcd.write_string("Warning!\nReceived")
-                
-                # 기존 타이머가 있다면 취소
-                if lcd_reset_timer:
-                    lcd_reset_timer.cancel()
-                
-                # 5초 후에 LCD를 공부 시간 표시로 리셋하는 타이머 설정
-                lcd_reset_timer = threading.Timer(5, reset_lcd_display)
-                lcd_reset_timer.start()
             
-            # 로그 출력
+            # 반환 값과 시간 차이를 콘솔에 출력
             logging.info(f"원본 경고 시간: {warning_time}")
             logging.info(f"조정된 경고 시간 (KST): {warning_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
             logging.info(f"현재 시간 (KST): {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -241,17 +225,17 @@ def check_warning():
 def main_loop():
     led_state = 0
     last_study_time_check = 0
-    study_time_check_interval = 5  # 1분마다 공부 시간 확인
+    study_time_check_interval = 1  # 1초마다 공부 시간 확인
     logging.info("메인 루프 시작")
     
     while True:
         try:
             current_time = time.time()
             
-            # 경고 상태 확인 (3초마다)
+            # 경고 상태 확인 
             check_warning()
-             # 공부 시간 확인 (5초마다)
-            if current_time - last_study_time_check >= study_time_check_interval and not lcd_reset_timer:
+             # 공부 시간 확인 
+            if current_time - last_study_time_check >= study_time_check_interval:
                 check_study_time()
                 last_study_time_check = current_time
             
@@ -293,7 +277,7 @@ def main_loop():
                     # 호출 성공 알림음
                     buzzer = GPIO.PWM(37, 440)
                     buzzer.start(50)
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     buzzer.stop()
                 else:
                     logging.error(f"호출 실패: {response.status_code}")
@@ -301,21 +285,18 @@ def main_loop():
                         lcd.clear()
                         lcd.write_string("Call failed!")
                 
-                time.sleep(0.2)
+                time.sleep(0.1)
 
         except Exception as e:
             logging.error(f"메인 루프 에러: {e}")
             time.sleep(1)
 
 def cleanup():
-    global lcd_reset_timer
     logging.info("프로그램 정리 작업 시작")
     try:
         GPIO.cleanup()
         if lcd:
             lcd.clear()
-        if lcd_reset_timer:
-            lcd_reset_timer.cancel()
         logging.info("프로그램 정상 종료")
     except Exception as e:
         logging.error(f"cleanup 중 에러 발생: {e}")
@@ -347,3 +328,4 @@ if __name__ == "__main__":
         
         finally:
             cleanup()
+

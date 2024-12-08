@@ -7,7 +7,7 @@ import hashlib
 
 
 # 서버 URL 설정
-CAMERA_URL = "https://skycastle.cho0h5.org/stream_desk/"
+CAMERA_URL = "http://skycastle.cho0h5.org:8001/stream_desk/"
 
 # HLS 파일 경로
 HLS_DIR = "/home/ahnsukyum/groupProject/camera"
