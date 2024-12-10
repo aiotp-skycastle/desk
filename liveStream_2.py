@@ -11,7 +11,7 @@ from datetime import datetime
 
 # HLS 디렉토리 및 서버 URL 설정
 HLS_DIR = "/home/ahnsukyum/groupProject/camera"
-CAMERA_URL = "http://skycastle.cho0h5.org:8001/stream_desk/"
+CAMERA_URL = "http://skycastle.cho0h5.org/stream_desk/"
 
 # 파일 해시 및 상태 추적
 file_hashes = {}

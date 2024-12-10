@@ -8,6 +8,32 @@ import sys
 import logging
 from datetime import datetime, timezone, timedelta
 
+buzzer = None  # 전역 변수로 선언
+
+def play_buzzer():
+    global buzzer
+    if buzzer:
+        try:
+            buzzer.start(50)  # Duty Cycle 50%
+            time.sleep(0.5)   # 소리 지속 시간
+            buzzer.stop()     # 부저 정지
+        except Exception as e:
+            logging.error(f"부저 동작 중 오류 발생: {e}")
+    else:
+        logging.warning("부저 객체가 초기화되지 않았습니다.")
+
+
+
+def setup_buzzer(pin=32, frequency=440):
+    """부저를 초기화하고 PWM 객체를 생성."""
+    global buzzer
+    if buzzer is None:  # 이미 생성된 경우 재생성 방지
+        GPIO.setup(pin, GPIO.OUT)
+        buzzer = GPIO.PWM(pin, frequency)
+        logging.info(f"부저 PWM 객체 생성 (Pin {pin}, Frequency {frequency} Hz)")
+    else:
+        logging.info("부저 PWM 객체가 이미 생성되어 있습니다. 기존 객체 사용.")
+
 
 
 # 로깅 설정 - 콘솔과 파일 모두에 로그 출력
@@ -29,6 +55,7 @@ def print_pin_status(pin, name):
         logging.error(f"{name} 상태 읽기 실패: {e}")
 
 def setup_gpio():
+    GPIO.cleanup()
     logging.info("GPIO 초기화 시작...")
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BOARD)
@@ -55,8 +82,8 @@ def setup_gpio():
 
     # 부저 핀 설정
     try:
-        GPIO.setup(37, GPIO.OUT)
-        logging.info("부저 (Pin 37) 초기화 완료")
+        GPIO.setup(32, GPIO.OUT)
+        logging.info("부저 (Pin 32) 초기화 완료")
     except Exception as e:
         logging.error(f"부저 초기화 실패: {e}")
     
@@ -85,6 +112,8 @@ def resolve_ip(domain):
         return None
 
 def make_request():
+    global buzzer
+    setup_buzzer()
     domain = 'skycastle.cho0h5.org'
     logging.info("HTTP 요청 시작...")
     
@@ -104,7 +133,7 @@ def make_request():
         logging.info(f"서버 {url}로 POST 요청 전송 중...")
         session = requests.Session()
         session.mount('https://', requests.adapters.HTTPAdapter(
-            max_retries=5,
+            max_retries=3,
             pool_connections=1,
             pool_maxsize=1
         ))
@@ -124,7 +153,6 @@ def make_request():
             lcd.clear()
             lcd.write_string(f"Request sent\n{response.status_code}")
         
-        buzzer = GPIO.PWM(37, 440)
         buzzer.start(50)
         time.sleep(0.5)
         buzzer.stop()
@@ -167,12 +195,19 @@ def check_study_time():
             hours, remainder = divmod(study_time_seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
             
-            study_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            study_time_str = f"{minutes:02d}m:{seconds:02d}s"
             logging.info(f"오늘의 공부 시간: {study_time_str}")
             
             if lcd:
                 lcd.clear()
-                lcd.write_string(f"Study Time:\n{study_time_str}")
+                
+                # 첫 번째 줄에 "Study Time" 출력
+                lcd.cursor_pos = (0, 0)  # 첫 번째 줄, 첫 번째 열
+                lcd.write_string("Study Time")
+                
+                # 두 번째 줄에 시간 출력
+                lcd.cursor_pos = (1, 0)  # 두 번째 줄, 첫 번째 열
+                lcd.write_string(study_time_str)
             
             return study_time_seconds
         else:
@@ -184,6 +219,9 @@ def check_study_time():
 
 
 def check_warning():
+
+    global buzzer
+    setup_buzzer()
     try:
         response = requests.get('https://skycastle.cho0h5.org/buzzer/status', 
                               headers={'accept': 'application/json'})
@@ -198,15 +236,19 @@ def check_warning():
             
             time_diff = abs((current_time - warning_datetime).total_seconds())
             
-            if time_diff <= 7:  # 3초 이내면
-                buzzer = GPIO.PWM(37, 440)
-                buzzer.start(50)
-                time.sleep(1)
-                buzzer.stop()
+            if time_diff <= 7:
+                play_buzzer()
+                if buzzer:  # 이미 생성된 PWM 객체 사용
+                    buzzer.start(50)
+                    time.sleep(1)
+                    buzzer.stop()
                 logging.info("경고 감지: 부저 동작")
+
                 if lcd:
                     lcd.clear()
                     lcd.write_string("Warning!\nReceived")
+                    #time.sleep(1)
+                    check_study_time()
             
             # 반환 값과 시간 차이를 콘솔에 출력
             logging.info(f"원본 경고 시간: {warning_time}")
@@ -225,16 +267,16 @@ def check_warning():
 def main_loop():
     led_state = 0
     last_study_time_check = 0
-    study_time_check_interval = 1  # 1초마다 공부 시간 확인
+    study_time_check_interval = 1  # 1분마다 공부 시간 확인
     logging.info("메인 루프 시작")
     
     while True:
         try:
             current_time = time.time()
             
-            # 경고 상태 확인 
+            # 경고 상태 확인 (3초마다)
             check_warning()
-             # 공부 시간 확인 
+             # 공부 시간 확인 (1분마다)
             if current_time - last_study_time_check >= study_time_check_interval:
                 check_study_time()
                 last_study_time_check = current_time
@@ -275,9 +317,9 @@ def main_loop():
                         lcd.clear()
                         lcd.write_string("Call sent\nSuccess!")
                     # 호출 성공 알림음
-                    buzzer = GPIO.PWM(37, 440)
+                    buzzer = GPIO.PWM(32, 440)
                     buzzer.start(50)
-                    time.sleep(0.1)
+                    time.sleep(0.5)
                     buzzer.stop()
                 else:
                     logging.error(f"호출 실패: {response.status_code}")
@@ -285,16 +327,20 @@ def main_loop():
                         lcd.clear()
                         lcd.write_string("Call failed!")
                 
-                time.sleep(0.1)
+                time.sleep(0.2)
 
         except Exception as e:
             logging.error(f"메인 루프 에러: {e}")
             time.sleep(1)
 
 def cleanup():
+    global buzzer
     logging.info("프로그램 정리 작업 시작")
     try:
-        GPIO.cleanup()
+        if buzzer:
+            buzzer.stop()  # 부저 PWM 정지
+            buzzer = None  # 객체 초기화
+        GPIO.cleanup()  # GPIO 리소스 해제
         if lcd:
             lcd.clear()
         logging.info("프로그램 정상 종료")
@@ -308,9 +354,10 @@ if __name__ == "__main__":
             requests.packages.urllib3.util.connection.allowed_gai_family = lambda: socket.AF_INET
             
             logging.info("하드웨어 초기화 시작")
+            GPIO.cleanup()
             led_pins = setup_gpio()
             lcd = setup_lcd()
-            buzzer = GPIO.PWM(37, 440)
+            buzzer = GPIO.PWM(32, 440)
             
             if lcd:
                 lcd.clear()
@@ -328,4 +375,3 @@ if __name__ == "__main__":
         
         finally:
             cleanup()
-
